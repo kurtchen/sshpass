@@ -40,6 +40,8 @@
 #include <errno.h>
 #include <string.h>
 
+#define ACCEPT_HOST_KEY_YES "yes"
+
 enum program_return_codes {
     RETURN_NOERROR,
     RETURN_INVALID_ARGUMENTS,
@@ -72,15 +74,17 @@ struct {
 
     const char *pwprompt;
     int verbose;
+    int accept_key;
 } args;
 
 static void show_help()
 {
-    printf("Usage: " PACKAGE_NAME " [-f|-d|-p|-e] [-hV] command parameters\n"
+    printf("Usage: " PACKAGE_NAME " [-f|-d|-p|-e|-a] [-hV] command parameters\n"
 	    "   -f filename   Take password to use from file\n"
 	    "   -d number     Use number as file descriptor for getting password\n"
 	    "   -p password   Provide password as argument (security unwise)\n"
 	    "   -e            Password is passed as env-var \"SSHPASS\"\n"
+	    "   -a            Auto accept host key changed notice\n"
 	    "   With no parameters - password will be taken from stdin\n\n"
             "   -P prompt     Which string should sshpass search for to detect a password prompt\n"
             "   -v            Be verbose about what you're doing\n"
@@ -104,7 +108,7 @@ static int parse_options( int argc, char *argv[] )
     fprintf(stderr, "Conflicting password source\n"); \
     error=RETURN_CONFLICTING_ARGUMENTS; }
 
-    while( (opt=getopt(argc, argv, "+f:d:p:P:heVv"))!=-1 && error==-1 ) {
+    while( (opt=getopt(argc, argv, "+f:d:p:P:heaVv"))!=-1 && error==-1 ) {
 	switch( opt ) {
 	case 'f':
 	    // Password should come from a file
@@ -152,6 +156,9 @@ static int parse_options( int argc, char *argv[] )
                 error=RETURN_INVALID_ARGUMENTS;
             }
 	    break;
+    case 'a':
+        args.accept_key = 1;
+        break;
 	case '?':
 	case ':':
 	    error=RETURN_INVALID_ARGUMENTS;
@@ -390,6 +397,7 @@ int handleoutput( int fd )
     static int prevmatch=0; // If the "password" prompt is repeated, we have the wrong password.
     static int state1, state2;
     static int firsttime = 1;
+    static int key_accepted = 0;
     static const char *compare1=PASSWORD_PROMPT; // Asking for a password
     static const char compare2[]="The authenticity of host "; // Asks to authenticate host
     // static const char compare3[]="WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!"; // Warns about man in the middle attack
@@ -437,8 +445,21 @@ int handleoutput( int fd )
         // Are we being prompted to authenticate the host?
         if( compare2[state2]=='\0' ) {
             if( args.verbose )
-                fprintf(stderr, "SSHPASS detected host authentication prompt. Exiting.\n");
-            ret=RETURN_HOST_KEY_UNKNOWN;
+                if (args.accept_key) {
+                    fprintf(stderr, "SSHPASS detected host authentication prompt.\n");
+                } else {
+                    fprintf(stderr, "SSHPASS detected host authentication prompt. Exiting.\n");
+                }
+
+            if (args.accept_key) {
+                if (!key_accepted) {
+                    write( fd, ACCEPT_HOST_KEY_YES, strlen(ACCEPT_HOST_KEY_YES) );
+                    write( fd, "\n", 1 );
+                    key_accepted = 1;
+                }
+            } else {
+                ret=RETURN_HOST_KEY_UNKNOWN;
+            }
         }
     }
 
